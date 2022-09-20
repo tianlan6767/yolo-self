@@ -1,10 +1,9 @@
 import argparse
 import time
 from pathlib import Path
-import json
+
 import cv2
 import torch
-import os.path as osp
 import torch.backends.cudnn as cudnn
 from numpy import random
 
@@ -15,17 +14,8 @@ from utils.general import check_img_size, check_requirements, check_imshow, non_
 from utils.plots import plot_one_box
 from utils.torch_utils import select_device, load_classifier, time_synchronized, TracedModel
 
-# import os
-# os.environ['CUDA_VISBLE_DEVICES'] ='2'
 
-def save_jf(dir, jsd, name):
-    if osp.exists(osp.join(dir, "{}.json".format(name))):
-        cur_time = time.strftime("%m%d%H%M", time.localtime(time.time()))
-        name = name + "_" + cur_time
-    with open(osp.join(dir, "{}.json".format(name)), "w", encoding="utf-8") as f:
-        json.dump(jsd, f, ensure_ascii=False)
-
-def detect(save_img=False, save_json=True):
+def detect(save_img=False):
     source, weights, view_img, save_txt, imgsz, trace,channel = opt.source, opt.weights, opt.view_img, opt.save_txt, opt.img_size, not opt.no_trace, opt.channel
     save_txt = True
     save_img = not opt.nosave and not source.endswith('.txt')  # save inference images
@@ -34,7 +24,7 @@ def detect(save_img=False, save_json=True):
 
     # Directories
     save_dir = Path(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))  # increment run
-    (save_dir).mkdir(parents=True, exist_ok=True)  # make dir
+    (save_dir / 'labels' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
 
     # Initialize
     set_logging()
@@ -51,6 +41,12 @@ def detect(save_img=False, save_json=True):
 
     if half:
         model.half()  # to FP16
+
+    # Second-stage classifier
+    classify = False
+    if classify:
+        modelc = load_classifier(name='resnet101', n=2)  # initialize
+        modelc.load_state_dict(torch.load('weights/resnet101.pt', map_location=device)['model']).to(device).eval()
 
     # Set Dataloader
     vid_path, vid_writer = None, None
@@ -70,15 +66,7 @@ def detect(save_img=False, save_json=True):
     if device.type != 'cpu':
         model(torch.zeros(1, opt.channel, imgsz, imgsz).to(device).type_as(next(model.parameters())))  # run once
     t0 = time.time()
-    inf_js = {}
     for path, img, im0s, vid_cap in dataset:
-        
-        imn = osp.basename(path)
-        inf_js[imn] = {
-            "filename":imn,
-            "regions":[],
-            "type":"inf"
-        }
         img = torch.from_numpy(img).to(device)
         img = img.half() if half else img.float()  # uint8 to fp16/32
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
@@ -91,12 +79,14 @@ def detect(save_img=False, save_json=True):
         pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, classes=opt.classes, agnostic=opt.agnostic_nms)
         t2 = time_synchronized()
 
+        # Apply Classifier
+        if classify:
+            pred = apply_classifier(pred, modelc, img, im0s)
+
         print("inf time:",time_synchronized()-t1)
 
         # Process detections
-        
         for i, det in enumerate(pred):  # detections per image
-            regions = []
             if webcam:  # batch_size >= 1
                 p, s, im0, frame = path[i], '%g: ' % i, im0s[i].copy(), dataset.count
             else:
@@ -104,7 +94,7 @@ def detect(save_img=False, save_json=True):
 
             p = Path(p)  # to Path
             save_path = str(save_dir / p.name)  # img.jpg
-            # txt_path = str(save_dir / 'labels' / p.stem) + ('' if dataset.mode == 'image' else f'_{frame}')  # img.txt
+            txt_path = str(save_dir / 'labels' / p.stem) + ('' if dataset.mode == 'image' else f'_{frame}')  # img.txt
             s += '%gx%g ' % img.shape[2:]  # print string
             gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
             if len(det):
@@ -117,36 +107,19 @@ def detect(save_img=False, save_json=True):
                     s += f"{n} {names[int(c)]}{'s' * (n > 1)}, "  # add to string
 
                 # Write results
-                
-                for *xyxy, conf, cls in reversed(det):  # 每张图片上的所有目标
-                    region = {}
-                    # if save_txt:  # Write to file
-                    #     xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
-                    #     line = (cls, *xywh, conf) if opt.save_conf else (cls, *xywh)  # label format
-                    #     with open(txt_path + '.txt', 'a') as f:
-                    #         f.write(('%g ' * len(line)).rstrip() % line + '\n')
-                    
+                for *xyxy, conf, cls in reversed(det):
+                    if save_txt:  # Write to file
+                        xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
+                        line = (cls, *xywh, conf) if opt.save_conf else (cls, *xywh)  # label format
+                        with open(txt_path + '.txt', 'a') as f:
+                            f.write(('%g ' * len(line)).rstrip() % line + '\n')
+
                     if save_img or view_img:  # Add bbox to image
                         label = f'{names[int(cls)]} {conf:.2f}'
                         plot_one_box(xyxy, im0, label=label, color=colors[int(cls)], line_thickness=3)
-                    
-                    if save_json:
-                        xyxy = ((torch.tensor(xyxy).view(1, 4))).view(-1).tolist()  # normalized xywh
-                        xyxy = [int(i) for i in  xyxy]
-                        region["shape_attributes"] = {
-                            "all_points_x":[xyxy[0], xyxy[2], xyxy[2], xyxy[0]],
-                            "all_points_y":[xyxy[1], xyxy[1], xyxy[3], xyxy[3]]
-                        }
-                        region["region_attributes"] = {
-                            "regions":str(int(cls)), 
-                            "score":round(float(conf), 5)
-                        }
-
-                        regions.append(region)
-
 
             # Print time (inference + NMS)
-            print(f'{s}Done. ({t2 - t1:.3f}s)')
+            #print(f'{s}Done. ({t2 - t1:.3f}s)')
 
             # Stream results
             if view_img:
@@ -172,11 +145,6 @@ def detect(save_img=False, save_json=True):
                             save_path += '.mp4'
                         vid_writer = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
                     vid_writer.write(im0)
-            if save_json:
-                inf_js[imn]["regions"] = regions
-        
-
-    save_jf(save_dir, inf_js, "yolo")
 
     if save_txt or save_img:
         s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if save_txt else ''
@@ -187,13 +155,13 @@ def detect(save_img=False, save_json=True):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', nargs='+', type=str, default='/media/ps/E80EDA380EDA000C/LQ/yolo/yolov7/runs/train/small/weights/best.pt', help='model.pt path(s)')
+    parser.add_argument('--weights', nargs='+', type=str, default='/media/ps/E80EDA380EDA000C/LQ/yolo/yolov7/runs/train/small/weights/best_299.pt', help='model.pt path(s)')
     parser.add_argument('--source', type=str, default='/home/ps/train/LQ/855G/test/0919/LJ/imgs', help='source')  # file/folder, 0 for webcam
     parser.add_argument('--channel', type=int, default='3', help='image channel')
     parser.add_argument('--img-size', type=int, default=4096, help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.4, help='object confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.45, help='IOU threshold for NMS')
-    parser.add_argument('--device', default='2', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    parser.add_argument('--device', default='0', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--view-img', action='store_true', help='display results')
     parser.add_argument('--save-txt', action='store_true', help='save results to *.txt')
     parser.add_argument('--save-conf', action='store_true', help='save confidences in --save-txt labels')
@@ -211,4 +179,9 @@ if __name__ == '__main__':
     #check_requirements(exclude=('pycocotools', 'thop'))
 
     with torch.no_grad():
-        detect()
+        if opt.update:  # update all models (to fix SourceChangeWarning)
+            for opt.weights in ['yolov7.pt']:
+                detect()
+                strip_optimizer(opt.weights)
+        else:
+            detect()
