@@ -40,16 +40,18 @@ def detect(save_img=False, save_json=True):
     set_logging()
     device = select_device(opt.device)
     half = device.type != 'cpu'  # half precision only supported on CUDA
-
+    half = False
     # Load model
     model = attempt_load(weights, map_location=device)  # load FP32 model
     stride = int(model.stride.max())  # model stride
     imgsz = check_img_size(imgsz, s=stride)  # check img_size
     
     if trace:
-        model = TracedModel(model, device, opt.img_size)
+        pass
+        # model = TracedModel(model, device, opt.img_size)
 
     if half:
+        # pass 
         model.half()  # to FP16
 
     # Set Dataloader
@@ -91,7 +93,7 @@ def detect(save_img=False, save_json=True):
         pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, classes=opt.classes, agnostic=opt.agnostic_nms)
         t2 = time_synchronized()
 
-        print("inf time:",time_synchronized()-t1)
+        # print("inf time:",time_synchronized()-t1)
 
         # Process detections
         
@@ -144,7 +146,6 @@ def detect(save_img=False, save_json=True):
 
                         regions.append(region)
 
-
             # Print time (inference + NMS)
             print(f'{s}Done. ({t2 - t1:.3f}s)')
 
@@ -156,7 +157,7 @@ def detect(save_img=False, save_json=True):
             # Save results (image with detections)
             if save_img:
                 if dataset.mode == 'image':
-                    cv2.imwrite(save_path, im0)
+                    cv2.imwrite(save_path.replace(".bmp", ".jpg"), im0)
                     # print(f" The image with the result is saved in: {save_path}")
                 else:  # 'video' or 'stream'
                     if vid_path != save_path:  # new video
@@ -188,12 +189,12 @@ def detect(save_img=False, save_json=True):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--weights', nargs='+', type=str, default='/media/ps/E80EDA380EDA000C/LQ/yolo/yolov7/runs/train/small/weights/best.pt', help='model.pt path(s)')
-    parser.add_argument('--source', type=str, default='/home/ps/train/LQ/855G/test/0919/LJ/imgs', help='source')  # file/folder, 0 for webcam
+    parser.add_argument('--source', type=str, default='/media/ps/E80EDA380EDA000C/LQ/yolo/yolov7/dataset/855g_small/images/val', help='source')  # file/folder, 0 for webcam
     parser.add_argument('--channel', type=int, default='3', help='image channel')
-    parser.add_argument('--img-size', type=int, default=4096, help='inference size (pixels)')
-    parser.add_argument('--conf-thres', type=float, default=0.4, help='object confidence threshold')
+    parser.add_argument('--img-size', type=int, default=2048, help='inference size (pixels)')
+    parser.add_argument('--conf-thres', type=float, default=0.25, help='object confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.45, help='IOU threshold for NMS')
-    parser.add_argument('--device', default='2', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    parser.add_argument('--device', default='0,1,2', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--view-img', action='store_true', help='display results')
     parser.add_argument('--save-txt', action='store_true', help='save results to *.txt')
     parser.add_argument('--save-conf', action='store_true', help='save confidences in --save-txt labels')

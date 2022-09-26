@@ -261,3 +261,12 @@ com_crashlytics_export_strings.xml
 crashlytics.properties
 crashlytics-build.properties
 fabric.properties
+
+
+# trt
+trt/example-simple_yolo/lean/*
+trt/example-simple_yolo/objs/*
+trt/example-simple_yolo/workspace/simple_yolo_result*
+trt/example-simple_yolo/workspace/*.trtmodel
+trt/example-simple_yolo/workspace/*.onnx
+trt/example-simple_yolo/workspace/pro
